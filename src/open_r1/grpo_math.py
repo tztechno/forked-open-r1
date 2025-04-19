@@ -251,7 +251,7 @@ def main(script_args, training_args, model_args):
         if training_args.system_prompt is not None:
             prompt.append({"role": "system", "content": training_args.system_prompt})
 
-        prompt.append({"role": "user", "content": example["question"]})
+        prompt.append({"role": "user", "content": example["problem"]})
         return {"prompt": prompt}
 
     if training_args.sample_num != 0:
@@ -264,8 +264,8 @@ def main(script_args, training_args, model_args):
         if "messages" in dataset[split].column_names:
             dataset[split] = dataset[split].remove_columns("messages")
             
-        if "answer" in dataset[split].column_names:
-            dataset[split] = dataset[split].rename_column("answer","solution")
+        # if "answer" in dataset[split].column_names:
+        #     dataset[split] = dataset[split].rename_column("answer","solution")
 
     logger.info("*** Initializing model kwargs ***")
     torch_dtype = (
