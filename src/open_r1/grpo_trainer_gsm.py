@@ -858,7 +858,7 @@ class GRPOTrainer(Trainer):
                 reward_kwargs = {key: [example[key] for example in inputs] for key in keys}
                 # edit
                 if self.args.allocation:
-                    reward_kwargs['question'] = [ x for num in reward_kwargs['question'] for x in [ num ] * self.repeat ] 
+                    reward_kwargs['problem'] = [ x for num in reward_kwargs['problem'] for x in [ num ] * self.repeat ] 
                     reward_kwargs['solution'] = [ x for num in reward_kwargs['solution'] for x in [ num ] * self.repeat ] 
                 output_reward_func = reward_func(prompts=prompts, completions=completions, **reward_kwargs)
                 rewards_per_func[:, i] = torch.tensor(output_reward_func, dtype=torch.float32, device=device)
