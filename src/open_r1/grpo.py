@@ -15,20 +15,16 @@
 import logging
 import os
 import sys
-import time
 from dataclasses import dataclass, field
 
 import datasets
-import numpy as np
-import random
 import torch
 import transformers
 from datasets import load_dataset
 from transformers import set_seed
 from transformers.trainer_utils import get_last_checkpoint
 
-from open_r1.configs import GRPOConfig, GRPOScriptArguments
-from open_r1.rewards import get_reward_funcs
+from open_r1.configs import GRPOConfig
 from open_r1.rewards_gsm import (
     accuracy_reward,
     code_reward,
@@ -40,15 +36,16 @@ from open_r1.rewards_gsm import (
     reasoning_steps_reward,
     tag_count_reward,
 )
-from open_r1.utils import get_model, get_tokenizer
+from open_r1.utils import get_tokenizer
 from open_r1.utils.callbacks import get_callbacks
 from open_r1.utils.wandb_logging import init_wandb_training
-from trl import GRPOTrainer, ModelConfig, ScriptArguments, TrlParser, get_peft_config
-from open_r1.grpo_trainer_gsm import GRPOTrainer as GRPOTrainerGSM
-
+from trl import  ModelConfig, ScriptArguments, TrlParser, get_peft_config
+import random 
+import numpy as np
+from open_r1.grpo_trainer_gsm import GRPOTrainer
 
 logger = logging.getLogger(__name__)
-
+import time
 
 def set_random_seed(seed: int = 42):
     """
@@ -105,83 +102,76 @@ def build_prompt(messages):
    return "\n".join([msg["content"].strip() for msg in messages])
 
 
-def setup_reward_funcs(script_args):
-    """Set up reward functions based on script arguments"""
-    # Use existing function or initialize from registry
-    if hasattr(script_args, "reward_funcs_type") and script_args.reward_funcs_type == "gsm":
-        # GSM specific reward functions
-        REWARD_FUNCS_REGISTRY = {
-            "accuracy": accuracy_reward,
-            "format": format_reward,
-            "reasoning_steps": reasoning_steps_reward,
-            "cosine": get_cosine_scaled_reward(
-                min_value_wrong=script_args.cosine_min_value_wrong,
-                max_value_wrong=script_args.cosine_max_value_wrong,
-                min_value_correct=script_args.cosine_min_value_correct,
-                max_value_correct=script_args.cosine_max_value_correct,
-                max_len=script_args.cosine_max_len,
-            ),
-            "repetition_penalty": get_repetition_penalty_reward(
-                ngram_size=script_args.repetition_n_grams,
-                max_penalty=script_args.repetition_max_penalty,
-            ),
-            "length": len_reward,
-            "code": code_reward,
-            "code_format": get_code_format_reward(language=script_args.code_language),
-            "tag_count": tag_count_reward,
-        }
-        return [REWARD_FUNCS_REGISTRY[func] for func in script_args.reward_funcs]
-    else:
-        # Use standard reward functions from registry
-        return get_reward_funcs(script_args)
 
 
-def prepare_dataset(dataset, script_args, training_args):
-    """Prepare dataset for training"""
-    # Sample data if needed
-    if hasattr(training_args, "sample_num") and training_args.sample_num != 0:
-        for split in dataset:
-            dataset[split] = dataset[split].select(range(training_args.sample_num))
+@dataclass
+class GRPOScriptArguments(ScriptArguments):
+    """
+    Script arguments for the GRPO training script.
 
-    # Format into conversation
-    def make_conversation(example, prompt_column=None):
-        prompt = []
-        if training_args.system_prompt is not None:
-            prompt.append({"role": "system", "content": training_args.system_prompt})
+    Args:
+        reward_funcs (`list[str]`):
+            List of reward functions. Possible values: 'accuracy', 'format', 'format_deepseek', 'reasoning_steps', 'cosine', 'repetition_penalty', 'length', tag_count', 'code', 'code_format'.
+        cosine_min_value_wrong (`float`):
+            Minimum reward for cosine scaling for wrong answers.
+        cosine_max_value_wrong (`float`):
+            Maximum reward for cosine scaling for wrong answers.
+        cosine_min_value_correct (`float`):
+            Minimum reward for cosine scaling for correct answers.
+        cosine_max_value_correct (`float`):
+            Maximum reward for cosine scaling for correct answers.
+        cosine_max_len (`int`):
+            Maximum length for cosine scaling.
+        code_language (`str`):
+            Language for code format reward.
+    """
 
-        # Determine the prompt column
-        if prompt_column is None:
-            if "question" in example:
-                prompt_column = "question"
-            elif hasattr(script_args, "dataset_prompt_column"):
-                prompt_column = script_args.dataset_prompt_column
-            else:
-                raise ValueError("Dataset Question Field Error: No prompt column found.")
-
-        if prompt_column not in example:
-            raise ValueError(f"Dataset Question Field Error: {prompt_column} is not supported.")
-            
-        prompt.append({"role": "user", "content": example[prompt_column]})
-        return {"prompt": prompt}
-
-    dataset = dataset.map(make_conversation)
-
-    # Clean up columns
-    for split in dataset:
-        if "messages" in dataset[split].column_names:
-            dataset[split] = dataset[split].remove_columns("messages")
-            
-        # Rename answer to solution if needed for GSM dataset
-        if "answer" in dataset[split].column_names:
-            dataset[split] = dataset[split].rename_column("answer", "solution")
-            
-    return dataset
+    reward_funcs: list[str] = field(
+        default_factory=lambda: ["accuracy", "format", "tag_count"],
+        metadata={
+            "help": "List of reward functions. Possible values: 'accuracy', 'format', 'format_deepseek', 'reasoning_steps', 'cosine', 'repetition_penalty', 'length', tag_count', 'code', 'code_format'"
+        },
+    )
+    cosine_min_value_wrong: float = field(
+        default=0.0,
+        metadata={"help": "Minimum reward for wrong answers"},
+    )
+    cosine_max_value_wrong: float = field(
+        default=-0.5,
+        metadata={"help": "Maximum reward for wrong answers"},
+    )
+    cosine_min_value_correct: float = field(
+        default=0.5,
+        metadata={"help": "Minimum reward for correct answers"},
+    )
+    cosine_max_value_correct: float = field(
+        default=1.0,
+        metadata={"help": "Maximum reward for correct answers"},
+    )
+    cosine_max_len: int = field(
+        default=1000,
+        metadata={"help": "Maximum length for scaling"},
+    )
+    repetition_n_grams: int = field(
+        default=3,
+        metadata={"help": "Number of n-grams for repetition penalty reward"},
+    )
+    repetition_max_penalty: float = field(
+        default=-1.0,
+        metadata={"help": "Maximum (negative) penalty for for repetition penalty reward"},
+    )
+    code_language: str = field(
+        default="python",
+        metadata={
+            "help": "Language for code format reward. Based on E2B supported languages https://e2b.dev/docs/code-interpreting/supported-languages",
+            "choices": ["python", "javascript", "r", "java", "bash"],
+        },
+    )
 
 
 def main(script_args, training_args, model_args):
     # Set seed for reproducibility
     set_seed(training_args.seed)
-    set_random_seed(training_args.seed)
 
     ###############
     # Setup logging
@@ -193,11 +183,10 @@ def main(script_args, training_args, model_args):
     )
     log_level = training_args.get_process_log_level()
     
-    # Adjust log level based on rank
-    if hasattr(training_args, "local_rank") and training_args.local_rank == 0:
+    if training_args.local_rank==0:
         log_level = logging.INFO
     else:
-        log_level = log_level or logging.ERROR
+        log_level = logging.ERROR
 
     logger.setLevel(log_level)
     datasets.utils.logging.set_verbosity(log_level)
@@ -226,46 +215,74 @@ def main(script_args, training_args, model_args):
 
     # Load the dataset
     dataset = load_dataset(script_args.dataset_name, name=script_args.dataset_config)
-    dataset = prepare_dataset(dataset, script_args, training_args)
-
     ################
     # Load tokenizer
     ################
     tokenizer = get_tokenizer(model_args, training_args)
 
-    # Setup reward functions
-    reward_funcs = setup_reward_funcs(script_args)
+    # Get reward functions
+    REWARD_FUNCS_REGISTRY = {
+        "accuracy": accuracy_reward,
+        "format": format_reward,
+        "reasoning_steps": reasoning_steps_reward,
+        "cosine": get_cosine_scaled_reward(
+            min_value_wrong=script_args.cosine_min_value_wrong,
+            max_value_wrong=script_args.cosine_max_value_wrong,
+            min_value_correct=script_args.cosine_min_value_correct,
+            max_value_correct=script_args.cosine_max_value_correct,
+            max_len=script_args.cosine_max_len,
+        ),
+        "repetition_penalty": get_repetition_penalty_reward(
+            ngram_size=script_args.repetition_n_grams,
+            max_penalty=script_args.repetition_max_penalty,
+        ),
+        "length": len_reward,
+        "code": code_reward,
+        "code_format": get_code_format_reward(language=script_args.code_language),
+        "tag_count": tag_count_reward,
+    }
+    reward_funcs = [REWARD_FUNCS_REGISTRY[func] for func in script_args.reward_funcs]
 
-    #########################
-    # Initialize model kwargs
-    #########################
-    use_gsm_trainer = hasattr(script_args, "reward_funcs_type") and script_args.reward_funcs_type == "gsm"
-    
-    if use_gsm_trainer:
-        logger.info("*** Initializing model kwargs for GSM trainer ***")
-        torch_dtype = (
-            model_args.torch_dtype if model_args.torch_dtype in ["auto", None] else getattr(torch, model_args.torch_dtype)
-        )
-        model_kwargs = dict(
-            revision=model_args.model_revision,
-            trust_remote_code=model_args.trust_remote_code,
-            attn_implementation=model_args.attn_implementation,
-            torch_dtype=torch_dtype,
-            use_cache=False if training_args.gradient_checkpointing else True,
-        )
-        training_args.model_init_kwargs = model_kwargs
-        model = model_args.model_name_or_path
-    else:
-        logger.info("*** Loading model ***")
-        model = get_model(model_args, training_args)
+    # Format into conversation
+    def make_conversation(example):
+        prompt = []
+        if training_args.system_prompt is not None:
+            prompt.append({"role": "system", "content": training_args.system_prompt})
+
+        prompt.append({"role": "user", "content": example["question"]})
+        return {"prompt": prompt}
+
+    if training_args.sample_num != 0:
+        for split in dataset:
+           dataset[split] = dataset[split].select(range(training_args.sample_num))
+
+    dataset = dataset.map(make_conversation)
+
+    for split in dataset:
+        if "messages" in dataset[split].column_names:
+            dataset[split] = dataset[split].remove_columns("messages")
+            
+        if "answer" in dataset[split].column_names:
+            dataset[split] = dataset[split].rename_column("answer","solution")
+
+    logger.info("*** Initializing model kwargs ***")
+    torch_dtype = (
+        model_args.torch_dtype if model_args.torch_dtype in ["auto", None] else getattr(torch, model_args.torch_dtype)
+    )
+    model_kwargs = dict(
+        revision=model_args.model_revision,
+        trust_remote_code=model_args.trust_remote_code,
+        attn_implementation=model_args.attn_implementation,
+        torch_dtype=torch_dtype,
+        use_cache=False if training_args.gradient_checkpointing else True,
+    )
+    training_args.model_init_kwargs = model_kwargs
 
     #############################
     # Initialize the GRPO trainer
     #############################
-    TrainerClass = GRPOTrainerGSM if use_gsm_trainer else GRPOTrainer
-    
-    trainer = TrainerClass(
-        model=model,
+    trainer = GRPOTrainer(
+        model=model_args.model_name_or_path,
         reward_funcs=reward_funcs,
         args=training_args,
         train_dataset=dataset[script_args.dataset_train_split],
@@ -285,18 +302,13 @@ def main(script_args, training_args, model_args):
     elif last_checkpoint is not None:
         checkpoint = last_checkpoint
     
-    train_start_time = time.perf_counter()
+
     train_result = trainer.train(resume_from_checkpoint=checkpoint)
-    train_end_time = time.perf_counter()
-    
-    # Log timing information
-    if hasattr(trainer, "accelerator") and trainer.accelerator.is_main_process:
-        if hasattr(trainer, "train_start_time") and hasattr(trainer, "eval_time"):
-            print("\nTraining + Eval time:", train_end_time - trainer.train_start_time)
-            print("\nEval time:", trainer.eval_time)
-            print("\nTraining time:", train_end_time - trainer.train_start_time - trainer.eval_time)
-        else:
-            print("\nTotal training time:", train_end_time - train_start_time)
+    if trainer.accelerator.is_main_process:  
+        train_end_time = time.perf_counter()
+        print("\nTraining + Eval time:", train_end_time - trainer.train_start_time)
+        print("\nEval time:", trainer.eval_time)
+        print("\nTraining time:", train_end_time - trainer.train_start_time - trainer.eval_time)
     
     metrics = train_result.metrics
     metrics["train_samples"] = len(dataset[script_args.dataset_train_split])
@@ -317,8 +329,7 @@ def main(script_args, training_args, model_args):
         "tags": ["open-r1"],
     }
     
-    is_main_process = hasattr(trainer, "accelerator") and trainer.accelerator.is_main_process
-    if is_main_process or (hasattr(trainer, "is_world_process_zero") and trainer.is_world_process_zero()):
+    if trainer.accelerator.is_main_process:
         trainer.create_model_card(**kwargs)
         # Restore k,v cache for fast inference
         trainer.model.config.use_cache = True
@@ -334,16 +345,10 @@ def main(script_args, training_args, model_args):
         trainer.log_metrics("eval", metrics)
         trainer.save_metrics("eval", metrics)
 
-    #############
-    # push to hub
-    #############
-    if training_args.push_to_hub:
-        logger.info("Pushing to hub...")
-        trainer.push_to_hub(**kwargs)
-
 
 if __name__ == "__main__":
-    # Parse arguments
+    # Call the function to set random seed for reproducibility
+    set_random_seed(42)
     parser = TrlParser((GRPOScriptArguments, GRPOConfig, ModelConfig))
     script_args, training_args, model_args = parser.parse_args_and_config()
     main(script_args, training_args, model_args)
