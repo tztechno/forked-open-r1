@@ -6,11 +6,11 @@
 https://github.com/lzhxmu/CPPO
 https://github.com/huggingface/open-r1
 
-2025/04/17 23:30
+2025/04/19 23:30
 
-configs.py:　fusioned 
+configs.py:　cppo parameters added.
 
-grpo.py　: from grpo_gsm.py
+grpo.py　: equal to grpo_gsm.py, however bad to use.
 
 
 ```
