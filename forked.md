@@ -8,9 +8,9 @@ https://github.com/huggingface/open-r1
 
 2025/04/17 23:30
 
-configs.py: 
+configs.py:　fusioned 
 
-grpo.py
+grpo.py　: from grpo_gsm.py
 
 
 ```
