@@ -1,5 +1,4 @@
-# Caution: setting for cppo added
-#
+
 # Copyright 2025 The HuggingFace Team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -44,7 +43,7 @@ from open_r1.utils.wandb_logging import init_wandb_training
 from trl import  ModelConfig, ScriptArguments, TrlParser, get_peft_config
 import random 
 import numpy as np
-from open_r1.grpo_trainer_gsm import GRPOTrainer
+from open_r1.grpo_trainer_math import GRPOTrainer
 
 logger = logging.getLogger(__name__)
 import time
@@ -251,7 +250,7 @@ def main(script_args, training_args, model_args):
         if training_args.system_prompt is not None:
             prompt.append({"role": "system", "content": training_args.system_prompt})
 
-        prompt.append({"role": "user", "content": example["problem"]})
+        prompt.append({"role": "user", "content": example["problem"]}) ############# setting column name of dataset
         return {"prompt": prompt}
 
     if training_args.sample_num != 0:
