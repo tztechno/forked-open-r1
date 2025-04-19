@@ -1,4 +1,4 @@
-# This is setting only for gsm8 dataset
+# Caution: setting for cppo added
 #
 # Copyright 2025 The HuggingFace Team. All rights reserved.
 #
