@@ -1,4 +1,4 @@
-# this is setting only for gsm8 dataset
+# This is setting only for gsm8 dataset
 #
 # Copyright 2025 The HuggingFace Team. All rights reserved.
 #
