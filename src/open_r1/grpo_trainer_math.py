@@ -55,7 +55,7 @@ from trl.models import create_reference_model, prepare_deepspeed, unwrap_model_f
 from trl.trainer.callbacks import SyncRefModelCallback
 from trl.trainer.grpo_config import GRPOConfig
 from trl.trainer.utils import generate_model_card, get_comet_experiment_url, pad, selective_log_softmax
-from open_r1.rewards_gsm import extract_answer_from_model_output, extract_answer_from_dataset, extract_last_number, extract_single_number
+from open_r1.rewards import extract_answer_from_model_output, extract_answer_from_dataset, extract_last_number, extract_single_number
 
 from tqdm import tqdm
 
